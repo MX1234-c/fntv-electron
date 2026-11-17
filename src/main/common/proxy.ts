@@ -39,12 +39,14 @@ function sendProxySecret(proxyProcess: ChildProcess, secret: string): void {
 
 // 获取应用中的proxy可执行文件路径
 function getProxyExecPath(): string {
+    if (process.platform === 'win32') {
+        const root = app.isPackaged ? path.dirname(process.execPath) : app.getAppPath();
+        return path.join(root, 'third_party', 'proxy', 'proxy.exe');
+    }
+
     // 检查是否在开发环境（未打包）
     if (!app.isPackaged) {
-        // 未打包时使用相对路径
-        return process.platform === 'win32' 
-            ? ".\\third_party\\proxy\\proxy.exe"
-            : "./third_party/proxy/proxy";
+        return "./third_party/proxy/proxy";
     }
 
     // 已打包情况下的路径处理
@@ -53,8 +55,6 @@ function getProxyExecPath(): string {
         const appPath = app.getAppPath();
         const contentsPath = path.dirname(path.dirname(appPath)); // 从app.asar向上两级到Contents
         return path.join(contentsPath, 'third_party', 'proxy', 'proxy');
-    } else if (process.platform === 'win32') {
-        return ".\\third_party\\proxy\\proxy.exe";
     } else {
         // Linux: 构建时只复制了proxy目录内容到third_party/proxy
         const appPath = app.getAppPath();

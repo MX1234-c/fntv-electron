@@ -16,3 +16,9 @@ Commands return `409` without active MPV playback, and next also returns `409` a
 3. Send `POST /v1/play` with JSON `{"itemGuid":"<movie-or-episode-guid>"}`. This uses the same playlist and saved playback position as the desktop client. Check `/v1/status` for the current item and playback state.
 
 If MPV is already playing or starting, `/v1/play` returns `409 player_busy`. Close the existing player before opening another title through the API. A NAS login is required.
+
+## Start automatically on Windows
+
+Open the tray menu, choose **设置**, and enable **登录 Windows 后启动并隐藏到托盘**. After Windows sign-in, the app starts in the tray. **显示主窗口** opens the library. An HTTP playback request opens the MPV window while the library stays hidden. Disable the same setting to remove the login startup entry.
+
+For HTTP access after sign-in, save the token as a Windows user environment variable. A token set only in a PowerShell session is available only to programs launched from that session.

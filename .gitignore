@@ -14,3 +14,4 @@ play_video.py
 *.exe
 .idea
 .vscode
+/release-local-control/

@@ -1,3 +1,4 @@
+import { isTrayStartup } from './common/loginStartup';
 import { app, BrowserWindow, dialog, Notification } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
@@ -28,6 +29,7 @@ if (!gotTheLock) {
 } else {
     // 当尝试启动第二个实例时，聚焦到现有窗口
     app.on('second-instance', (event, commandLine, workingDirectory) => {
+        if (isTrayStartup(commandLine)) return;
         if (mainWindow) {
             if (mainWindow.isMinimized()) mainWindow.restore();
             if (!mainWindow.isVisible()) mainWindow.show();
@@ -87,7 +89,9 @@ if (!gotTheLock) {
             winctrl.setupInputMethodDisable(mainWindow);
 
             // 设置窗口显示事件
-            winctrl.setupWindowShowEvents(mainWindow);
+            if (!isTrayStartup(process.argv)) {
+                winctrl.setupWindowShowEvents(mainWindow);
+            }
 
             // 恢复 Cookie
             await winctrl.setupCookieRestore(mainWindow);

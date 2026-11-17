@@ -1,4 +1,5 @@
 import { Tray, Menu, nativeImage, BrowserWindow, app, dialog, ipcMain } from 'electron';
+import { getLoginStartupOptions } from './loginStartup';
 import * as path from 'path';
 import { getInstance as getUpdateChecker } from '../../modules/updater/updateChecker';
 import { setMacCloseAction, getTrayNotificationShown, setTrayNotificationShown } from './preferences';
@@ -115,6 +116,24 @@ async function createSettingsSubmenu(mainWindow: BrowserWindow | null): Promise<
             }
         }
     ];
+
+    if (process.platform === 'win32') {
+        const options = getLoginStartupOptions();
+        submenu.unshift({
+            label: '登录 Windows 后启动并隐藏到托盘',
+            type: 'checkbox',
+            checked: app.getLoginItemSettings(options).openAtLogin,
+            click: (item) => {
+                try {
+                    app.setLoginItemSettings({ ...options, openAtLogin: item.checked });
+                } catch (error) {
+                    log.error('更新 Windows 登录启动设置失败:', error);
+                    dialog.showErrorBox('无法更新自动启动', 'Windows 登录启动设置未能保存。');
+                }
+                void updateTrayMenu();
+            },
+        });
+    }
 
     return submenu;
 }
