@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import { PlayStatusData, ItemListRequest } from '../../../modules/fn_api/types';
 import { isTrusted } from '../../../modules/cert_trust';
 import { checkLibraryPageUrl } from '../../common/utils';
+import { createMediaHttpServer, MediaHttpError } from '../../common/mediaHttp';
 import { getMainWindow } from '../../common/mainwin';
 import { getMpvConfigDir } from './mpvConfig';
 import { resolveBundledMpvPath } from '../../common/mpvConfigHelpers';
@@ -226,20 +227,24 @@ function eventHandler(fnapi: fn.ApiService) {
 
 // 处理播放事件
 async function handlePlayMovie(_event: IpcMainEvent, request: PlayRequest): Promise<void> {
+    await requestPlayback(request);
+}
+
+async function requestPlayback(request: PlayRequest): Promise<'busy' | 'started' | 'failed'> {
     if (playbackStarting || currentPlayer?.isPlaying()) {
         log.warn('播放器正在启动或播放，忽略重复播放请求');
-        return;
+        return 'busy';
     }
 
     playbackStarting = true;
     try {
-        await startPlayback(request);
+        return await startPlayback(request) ? 'started' : 'failed';
     } finally {
         playbackStarting = false;
     }
 }
 
-async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<void> {
+async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<boolean> {
     log.info('Play movie event received id:', id, ' index:', sourceIndex);
 
     const config = fnConfig.readConfig();
@@ -253,7 +258,7 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<void> {
     const response = await fnapi.getPlayInfo(id);
     if (!response.success || !response.data) {
         log.error('获取播放信息失败:', response ? response.message : '未知错误');
-        return;
+        return false;
     }
 
     log.info('获取播放信息成功:', {
@@ -272,7 +277,7 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<void> {
         const episodeList = await fnapi.getEpisodeList(parentGuid);
         if (!episodeList.success || !episodeList.data) {
             log.error('获取剧集列表失败:', episodeList ? episodeList.message : '未知错误');
-            return;
+            return false;
         }
 
         for (const episode of episodeList.data) {
@@ -293,7 +298,7 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<void> {
         const mediaList = await fnapi.getItemList(req);
         if (!mediaList.success || !mediaList.data || !mediaList.data.list) {
             log.error('获取媒体列表失败:', mediaList ? mediaList.message : '未知错误');
-            return;
+            return false;
         }
         log.info(`获取媒体列表成功，共 ${mediaList.data.list.length} 项`);
 
@@ -311,7 +316,7 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<void> {
 
     if (playList.length === 0) {
         log.warn('播放列表为空');
-        return;
+        return false;
     }
 
     // 寻找当前播放的媒体在数组中的位置
@@ -350,7 +355,7 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<void> {
     const playerPath = getMpvPlayerPath();
     if (!playerPath) {
         log.error('无法找到MPV播放器路径');
-        return;
+        return false;
     }
 
     const mpvArgs = [
@@ -386,8 +391,9 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<void> {
     const started = await player.playList(playList, currentIndex);
     if (!started && currentPlayer === player) {
         currentPlayer = null;
-        return;
+        return false;
     }
+    return started;
 }
 
 // 处理当前播放的媒体信息
@@ -430,6 +436,27 @@ function handleBeforeQuit(): void {
     cachedPlayerPath = null;
 }
 
+function getLibraryApi(): fn.ApiService {
+    const config = fnConfig.readConfig();
+    if (!config?.domain || !config.token || !config.account) {
+        throw new MediaHttpError(409, 'nas_login_required');
+    }
+    return new fn.ApiService(config.domain, config.token);
+}
+
+function toLibraryResult(item: fn.PlayListItem) {
+    return {
+        itemGuid: item.guid,
+        title: item.title,
+        type: item.type,
+        tvTitle: item.tv_title,
+        seasonNumber: item.season_number,
+        episodeNumber: item.episode_number,
+        positionSeconds: item.ts,
+        durationSeconds: item.duration,
+    };
+}
+
 // 注册媒体播放处理器
 function init(): void {
     // 从配置中读取MPV播放器路径并设置
@@ -437,6 +464,48 @@ function init(): void {
     if (configMpvPath) {
         setMpvPlayerPath(configMpvPath);
         log.info(`从配置中加载MPV播放器路径: ${configMpvPath}`);
+    }
+
+    const controlToken = process.env.FNTV_MEDIA_HTTP_TOKEN;
+    if (process.platform === 'win32' && controlToken && /^[a-f0-9]{64}$/i.test(controlToken)) {
+        const server = createMediaHttpServer(controlToken, () =>
+            !playbackStarting && currentPlayer?.isPlaying() ? currentPlayer : null,
+            {
+                search: async query => {
+                    const result = await getLibraryApi().searchTitles(query);
+                    if (!result.success) throw new MediaHttpError(502, 'search_failed');
+                    return (result.data ?? [])
+                        .filter(item => ['Movie', 'TV', 'Episode', 'Video'].includes(item.type))
+                        .map(toLibraryResult);
+                },
+                seasons: async id => {
+                    const result = await getLibraryApi().getSeasonList(id);
+                    if (!result.success) throw new MediaHttpError(502, 'season_list_failed');
+                    return (result.data ?? []).map(toLibraryResult);
+                },
+                episodes: async id => {
+                    const result = await getLibraryApi().getEpisodeList(id);
+                    if (!result.success) throw new MediaHttpError(502, 'episode_list_failed');
+                    return (result.data ?? []).map(toLibraryResult);
+                },
+                play: async id => {
+                    getLibraryApi();
+                    const result = await requestPlayback({ id, sourceIndex: 0 });
+                    if (result === 'busy') throw new MediaHttpError(409, 'player_busy');
+                    if (result === 'failed') throw new MediaHttpError(502, 'playback_failed');
+                },
+            },
+        );
+        server.on('error', (error: NodeJS.ErrnoException) => {
+            log.warn('媒体控制服务无法监听 127.0.0.1:18473:', error.code);
+        });
+        server.listen(18473, '127.0.0.1', () => {
+            log.info('媒体控制服务已启动: http://127.0.0.1:18473');
+        });
+        registerAppHook('beforeQuit', () => {
+            server.close();
+            server.closeAllConnections();
+        });
     }
 
     registerHandler('play-movie', handlePlayMovie);

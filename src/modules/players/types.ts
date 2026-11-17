@@ -27,6 +27,17 @@ export type PlayStatusData = {
     percentage: number;
 }
 
+export type MediaControlStatus = {
+    state: 'playing' | 'paused' | 'loading';
+    itemGuid: string | null;
+    title: string | null;
+    seasonNumber: number | null;
+    episodeNumber: number | null;
+    positionSeconds: number | null;
+    durationSeconds: number | null;
+    volume: number;
+};
+
 // 播放器退出数据接口
 export type PlayExitData = {
     code: number;
@@ -92,6 +103,11 @@ export abstract class BasePlayer {
 
     // 判断播放器是否正在播放
     abstract isPlaying(): boolean;
+
+    abstract getControlStatus(): Promise<MediaControlStatus>;
+    abstract setPaused(paused: boolean): Promise<void>;
+    abstract setVolume(volume: number): Promise<void>;
+    abstract nextItem(): Promise<boolean>;
 
     // 获取当前播放状态
     protected getStatus(): PlayStatusData {

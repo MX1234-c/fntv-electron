@@ -10,7 +10,8 @@ import {
     EventType,
     PlayErrorData,
     PlayExitData,
-    PlayItem // <-- Add PlayItem to the import list
+    MediaControlStatus,
+    PlayItem
 } from '../types';
 import { PlayerFactory } from '../factory';
 import log from '../../logger';
@@ -483,6 +484,57 @@ export class MpvPlayer extends BasePlayer {
     /**
      * 检查是否正在播放
      */
+    private getControlPlayer(): NodeMpv {
+        const player = this.mpvInstance;
+        if (!player?.isRunning()) {
+            throw new Error('MPV is unavailable');
+        }
+        return player;
+    }
+
+    async getControlStatus(): Promise<MediaControlStatus> {
+        const player = this.getControlPlayer();
+        const [paused, volume, filename, position, duration] = await Promise.all([
+            player.getProperty('pause'),
+            player.getProperty('volume'),
+            player.getFilename().catch(() => ''),
+            player.getTimePosition().catch(() => null),
+            player.getDuration().catch(() => null),
+        ]);
+        const itemGuid = filename ? this.getItemIdFromFilename(String(filename)) : '';
+        const item = this.playlistItems.find(entry => entry.itemGuid === itemGuid);
+        return {
+            state: !item || position === null ? 'loading' : String(paused) === 'true' ? 'paused' : 'playing',
+            itemGuid: item?.itemGuid ?? null,
+            title: item ? this.getTitle(item) : null,
+            seasonNumber: item?.seasonNumber || null,
+            episodeNumber: item?.episodeNumber || null,
+            positionSeconds: item ? position : null,
+            durationSeconds: item ? duration : null,
+            volume: Number(volume),
+        };
+    }
+
+    async setPaused(paused: boolean): Promise<void> {
+        const player = this.getControlPlayer();
+        await (paused ? player.pause() : player.resume());
+    }
+
+    async setVolume(volume: number): Promise<void> {
+        await this.getControlPlayer().volume(volume);
+    }
+
+    async nextItem(): Promise<boolean> {
+        const player = this.getControlPlayer();
+        const [position, size] = await Promise.all([
+            player.getPlaylistPosition(),
+            player.getPlaylistSize(),
+        ]);
+        if (position < 0 || position + 1 >= size) return false;
+        await player.next('weak');
+        return true;
+    }
+
     isPlaying(): boolean {
         return this.mpvInstance !== null && this.mpvInstance.isRunning();
     }

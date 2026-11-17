@@ -221,6 +221,15 @@ export class ApiService {
      * 获取播放列表
      * @returns 返回播放列表的Promise
      */
+    searchTitles(query: string): Promise<fn.ApiResponse<types.PlayListItem[]>> {
+        return fn.request(this.baseURL, '/v/api/v1/search/list?q=' + encodeURIComponent(query),
+            HttpMethod.GET, this.token);
+    }
+
+    getSeasonList(id: string): Promise<fn.ApiResponse<types.PlayListItem[]>> {
+        return fn.request(this.baseURL, `/v/api/v1/season/list/${id}`, HttpMethod.GET, this.token);
+    }
+
     getEpisodeList(id: string): Promise<fn.ApiResponse<types.PlayListItem[]>> {
         return fn.request(this.baseURL, `/v/api/v1/episode/list/${id}`, HttpMethod.GET, this.token);
     }

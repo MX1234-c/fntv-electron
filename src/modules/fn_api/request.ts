@@ -46,12 +46,15 @@ export function generateRandomDigits(start: number = 100000, end: number = 10000
 export function genFnAuthx(url: string, data?: any): string {
     const nonce = generateRandomDigits();
     const timestamp = Date.now();
-    const dataJson = data ? JSON.stringify(data) : '';
+    const queryStart = url.indexOf('?');
+    const dataJson = queryStart >= 0 && data === undefined
+        ? decodeURIComponent(url.slice(queryStart + 1))
+        : data ? JSON.stringify(data) : '';
     const dataJsonMd5 = getMd5(dataJson);
 
     const signArray = [
         api_key,
-        url,
+        queryStart >= 0 ? url.slice(0, queryStart) : url,
         nonce,
         timestamp.toString(),
         dataJsonMd5,

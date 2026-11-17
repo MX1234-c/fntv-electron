@@ -1,7 +1,7 @@
 import logger from '../core/logger';
 import { registerHook, HookType } from '../core/hooks';
 import {
-    findItemGuid,
+    resolvePlayButtonGuid,
     getPlayButtonConfig,
     isSemanticPlayButton,
 } from '../core/playback';
@@ -13,7 +13,7 @@ function findDetailPlayButton(): HTMLElement | null {
 
         const className = typeof candidate.className === 'string' ? candidate.className.toLowerCase() : '';
         if (className.includes('play-mask') || className.includes('playmask')) continue;
-        if (findItemGuid(candidate)) return candidate.closest<HTMLElement>('button, [role="button"]');
+        if (resolvePlayButtonGuid(candidate)) return candidate.closest<HTMLElement>('button, [role="button"]');
     }
     return null;
 }
