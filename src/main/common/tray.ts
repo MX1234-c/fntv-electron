@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { Tray, Menu, nativeImage, BrowserWindow, app, dialog, ipcMain } from 'electron';
 import { getLoginStartupOptions } from './loginStartup';
 import * as path from 'path';
@@ -119,13 +120,28 @@ async function createSettingsSubmenu(mainWindow: BrowserWindow | null): Promise<
 
     if (process.platform === 'win32') {
         const options = getLoginStartupOptions();
+        let enabled = false;
+        try {
+            const value = execFileSync('reg.exe', [
+                'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+                '/v', options.name,
+            ], { windowsHide: true, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+            enabled = value.includes('--fntv-start-in-tray');
+        } catch {
+            // The startup entry does not exist.
+        }
         submenu.unshift({
             label: '登录 Windows 后启动并隐藏到托盘',
             type: 'checkbox',
-            checked: app.getLoginItemSettings(options).openAtLogin,
+            checked: enabled,
             click: (item) => {
                 try {
-                    app.setLoginItemSettings({ ...options, openAtLogin: item.checked });
+                    app.setLoginItemSettings({
+                        ...options,
+                        path: '"' + options.path + '"',
+                        openAtLogin: !enabled,
+                        enabled: !enabled,
+                    });
                 } catch (error) {
                     log.error('更新 Windows 登录启动设置失败:', error);
                     dialog.showErrorBox('无法更新自动启动', 'Windows 登录启动设置未能保存。');
