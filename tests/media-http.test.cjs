@@ -10,6 +10,11 @@ test('loopback media HTTP authenticates and dispatches playback controls', async
         getControlStatus: async () => status,
         setPaused: async (paused) => { status.state = paused ? 'paused' : 'playing'; },
         setVolume: async (volume) => { status.volume = volume; },
+        setWindowMode: async (mode) => { status.windowMode = mode; },
+        seekTo: async (seconds, mode) => {
+            status.positionSeconds = mode === 'relative' ? status.positionSeconds + seconds : seconds;
+            return status.positionSeconds;
+        },
         nextItem: async () => {
             if (status.title === 'Episode 2') return false;
             status.title = 'Episode 2';
@@ -48,6 +53,22 @@ test('loopback media HTTP authenticates and dispatches playback controls', async
     assert.equal((await getStatus()).volume, 50);
     assert.equal((await post('volume', '{"volume":30}')).status, 200);
     assert.equal((await getStatus()).volume, 30);
+    for (const mode of ['maximize', 'minimize', 'fullscreen']) {
+        assert.equal((await post(mode)).status, 200);
+        assert.equal((await getStatus()).windowMode, mode);
+    }
+    for (const [mode, seconds, targetSeconds] of [
+        ['relative', 30, 72],
+        ['relative', -10, 62],
+        ['absolute', 1200, 1200],
+    ]) {
+        const response = await post('seek', JSON.stringify({ mode, seconds }));
+        assert.equal(response.status, 200);
+        assert.deepEqual(await response.json(), { ok: true, targetSeconds });
+    }
+    for (const input of [{ mode: 'absolute', seconds: -1 }, { mode: 'relative', seconds: '30' }, { seconds: 5 }]) {
+        assert.equal((await post('seek', JSON.stringify(input))).status, 400);
+    }
     assert.equal((await post('next')).status, 200);
     assert.equal((await getStatus()).title, 'Episode 2');
     const last = await post('next');
@@ -61,6 +82,7 @@ test('media library routes validate input and pass selected IDs to playback', as
     const calls = [];
     const item = { itemGuid: id, title: '绝命毒师' };
     const server = createMediaHttpServer(token, () => null, {
+        catalog: async page => { calls.push(page); return { items: [item], total: 9 }; },
         search: async query => { calls.push(query); return [item]; },
         seasons: async guid => { calls.push(guid); return [item]; },
         episodes: async guid => { calls.push(guid); return [item]; },
@@ -83,5 +105,8 @@ test('media library routes validate input and pass selected IDs to playback', as
     }
     const play = await fetch(base + 'play', { method: 'POST', headers, body: JSON.stringify({ itemGuid: id }) });
     assert.deepEqual(await play.json(), { ok: true, itemGuid: id });
-    assert.deepEqual(calls, [item.title, id, id, id]);
+    assert.equal((await fetch(base + 'catalog?page=0', { headers })).status, 400);
+    assert.deepEqual(await (await fetch(base + 'catalog?page=2', { headers })).json(),
+        { page: 2, items: [item], total: 9 });
+    assert.deepEqual(calls, [item.title, id, id, id, 2]);
 });

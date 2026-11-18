@@ -693,6 +693,8 @@ export interface StreamResponse {
  * {"parent_guid":"fv_30006e2fdaa44c7aac2c3cb25c10121d","exclude_folder":1,"sort_column":"sort_title","sort_type":"ASC"}
  */
 export interface ItemListRequest {
+    page?: number;
+    page_size?: number;
     /** 父级项目的唯一标识符 */
     parent_guid: string;
     /** 是否排除文件夹，1表示排除，0表示不排除 */

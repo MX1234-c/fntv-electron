@@ -16,6 +16,7 @@ interface LibraryResult {
 }
 
 interface MediaLibrary {
+    catalog(page: number): Promise<{ items: LibraryResult[]; total: number }>;
     search(query: string): Promise<LibraryResult[]>;
     seasons(id: string): Promise<LibraryResult[]>;
     episodes(id: string): Promise<LibraryResult[]>;
@@ -32,6 +33,7 @@ export function createMediaHttpServer(
     token: string,
     getPlayer: () => BasePlayer | null,
     library?: MediaLibrary,
+    wakeDisplay?: () => void,
 ) {
     const app = express();
     const expected = Buffer.from('Bearer ' + token);
@@ -64,6 +66,7 @@ export function createMediaHttpServer(
 
     for (const [route, paused] of [['pause', true], ['resume', false]] as const) {
         app.post('/v1/' + route, requirePlayer, async (_req, res) => {
+            if (!paused) wakeDisplay?.();
             await (res.locals.player as BasePlayer).setPaused(paused);
             res.json({ ok: true });
         });
@@ -79,6 +82,26 @@ export function createMediaHttpServer(
         res.json({ ok: true, volume });
     });
 
+    for (const mode of ['maximize', 'minimize', 'fullscreen'] as const) {
+        app.post('/v1/' + mode, requirePlayer, async (_req, res) => {
+            if (mode !== 'minimize') wakeDisplay?.();
+            await (res.locals.player as BasePlayer).setWindowMode(mode);
+            res.json({ ok: true });
+        });
+    }
+
+    app.post('/v1/seek', express.json({ limit: '1kb' }), requirePlayer, async (req, res) => {
+        const seconds: unknown = req.body?.seconds;
+        const mode: unknown = req.body?.mode;
+        if (typeof seconds !== 'number' || !Number.isSafeInteger(seconds)
+            || (mode !== 'relative' && mode !== 'absolute')
+            || (mode === 'absolute' && seconds < 0)) {
+            throw new MediaHttpError(400, 'invalid_seek');
+        }
+        const targetSeconds = await (res.locals.player as BasePlayer).seekTo(seconds, mode);
+        res.json({ ok: true, targetSeconds });
+    });
+
     app.post('/v1/next', requirePlayer, async (_req, res) => {
         if (!await (res.locals.player as BasePlayer).nextItem()) {
             res.status(409).json({ error: 'no_next_item' });
@@ -88,6 +111,15 @@ export function createMediaHttpServer(
     });
 
     if (library) {
+        app.get('/v1/catalog', async (req, res) => {
+            const raw = req.query.page ?? '1';
+            const page = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : 0;
+            if (!Number.isSafeInteger(page) || page < 1 || page > 10000) {
+                throw new MediaHttpError(400, 'invalid_page');
+            }
+            res.json({ page, ...await library.catalog(page) });
+        });
+
         app.get('/v1/search', async (req, res) => {
             const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
             if (!q || q.length > 50) throw new MediaHttpError(400, 'invalid_query');

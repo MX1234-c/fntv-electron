@@ -64,13 +64,20 @@ export function findItemGuid(element: Element | null): string | null {
     return extractItemGuidFromUrl(window.location.href);
 }
 
-export function resolvePlayButtonGuid(button: HTMLElement): string | null {
+export function resolvePlayButtonGuid(button: HTMLElement, detail = false): string | null {
     const episode = button.textContent?.trim().match(/^第\s*(\d+)\s*集$/);
-    if (episode && /\/tv\/season\//i.test(window.location.pathname)) {
+    const page = new URL(window.location.href);
+    const route = page.pathname + page.hash;
+    if (episode && /\/tv\/season\//i.test(route)) {
         const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/episode/"]'));
         const matching = links.filter(link => link.textContent?.trim() === episode[1]);
         const ids = new Set(matching.map(link => extractItemGuidFromUrl(link.href)).filter(Boolean));
         return ids.size === 1 ? [...ids][0] : null;
+    }
+    if (detail) {
+        if (!/\/(?:movie|episode|other|video|detail|item)\//i.test(route)) return null;
+        const itemGuid = extractItemGuidFromUrl(page.href);
+        return isItemGuid(itemGuid) ? itemGuid : null;
     }
     return findItemGuid(button);
 }

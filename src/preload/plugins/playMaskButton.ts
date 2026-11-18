@@ -24,7 +24,7 @@ function findManagedPlayButton(target: EventTarget | null): HTMLElement | null {
     if (!(target instanceof Element)) return null;
 
     const button = findSemanticPlayButton(target);
-    if (!button || !resolvePlayButtonGuid(button)) return null;
+    if (!button || !resolvePlayButtonGuid(button, button.dataset.mpvDetailIntercepted === 'true')) return null;
     if (button.dataset.mpvDetailIntercepted === 'true') return button;
     return isCardPlayButton(button) ? button : null;
 }
@@ -36,7 +36,7 @@ function suppressNativePlayback(event: Event): void {
 }
 
 function playManagedButton(button: HTMLElement): void {
-    const itemGuid = resolvePlayButtonGuid(button);
+    const itemGuid = resolvePlayButtonGuid(button, button.dataset.mpvDetailIntercepted === 'true');
     if (!itemGuid) {
         logger.error('无法调用 MPV：未能识别播放项');
         return;

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -53,7 +54,12 @@ export class MpvPlayer extends BasePlayer {
                 ...args || []
             );
 
-            let mpvOptions = {
+            const socketId = 'fntv-' + randomUUID();
+            const socket = process.platform === 'win32'
+                ? '\\\\.\\pipe\\' + socketId
+                : path.join(os.tmpdir(), socketId + '.sock');
+            const mpvOptions = {
+                socket,
                 debug: this.config.debug,
                 binary: this.config.playerPath.length > 0 ? this.config.playerPath : undefined,
             };
@@ -484,6 +490,24 @@ export class MpvPlayer extends BasePlayer {
     /**
      * 检查是否正在播放
      */
+    async stopForSwitch(): Promise<void> {
+        const player = this.mpvInstance;
+        if (!player?.isRunning()) return;
+
+        const status = await this.getControlStatus().catch(() => null);
+        if (this.mpvInstance !== player) return;
+        if (status?.itemGuid && status.positionSeconds !== null && status.durationSeconds) {
+            this.updateGlobalStatus({
+                itemGuid: status.itemGuid,
+                ts: Math.floor(status.positionSeconds),
+                duration: Math.floor(status.durationSeconds),
+                percentage: Math.floor(status.positionSeconds / status.durationSeconds * 100),
+            });
+        }
+        await player.quit();
+        if (this.mpvInstance === player) this.handleExit(0);
+    }
+
     private getControlPlayer(): NodeMpv {
         const player = this.mpvInstance;
         if (!player?.isRunning()) {
@@ -522,6 +546,37 @@ export class MpvPlayer extends BasePlayer {
 
     async setVolume(volume: number): Promise<void> {
         await this.getControlPlayer().volume(volume);
+    }
+
+    async setWindowMode(mode: 'maximize' | 'minimize' | 'fullscreen'): Promise<void> {
+        const player = this.getControlPlayer();
+        if (mode === 'minimize') {
+            await player.setProperty('window-minimized', true);
+            return;
+        }
+        await player.setProperty('ontop', true);
+        await player.setProperty('window-minimized', false);
+        if (mode === 'fullscreen') {
+            await player.setProperty('fullscreen', true);
+            return;
+        }
+        await player.setProperty('fullscreen', false);
+        await player.setProperty('window-maximized', true);
+    }
+
+    async seekTo(seconds: number, mode: 'relative' | 'absolute'): Promise<number> {
+        const player = this.getControlPlayer();
+        const [position, duration] = await Promise.all([
+            player.getTimePosition(),
+            player.getDuration(),
+        ]);
+        if (!Number.isFinite(position) || !Number.isFinite(duration) || duration <= 0) {
+            throw new Error('Playback position is unavailable');
+        }
+        const target = seconds + (mode === 'relative' ? position : 0);
+        const clamped = Math.max(0, Math.min(target, duration));
+        await player.setProperty('time-pos', clamped);
+        return clamped;
     }
 
     async nextItem(): Promise<boolean> {

@@ -100,6 +100,7 @@ export abstract class BasePlayer {
 
     // 停止播放
     abstract stop(): void;
+    abstract stopForSwitch(): Promise<void>;
 
     // 判断播放器是否正在播放
     abstract isPlaying(): boolean;
@@ -107,6 +108,8 @@ export abstract class BasePlayer {
     abstract getControlStatus(): Promise<MediaControlStatus>;
     abstract setPaused(paused: boolean): Promise<void>;
     abstract setVolume(volume: number): Promise<void>;
+    abstract setWindowMode(mode: 'maximize' | 'minimize' | 'fullscreen'): Promise<void>;
+    abstract seekTo(seconds: number, mode: 'relative' | 'absolute'): Promise<number>;
     abstract nextItem(): Promise<boolean>;
 
     // 获取当前播放状态

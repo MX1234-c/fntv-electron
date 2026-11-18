@@ -1,3 +1,5 @@
+import { wakeWindowsDisplay } from '../../common/wakeDisplay';
+import { isIPv4 } from 'node:net';
 import { app, BrowserWindow, dialog, IpcMainEvent } from 'electron';
 import * as ply from '../../../modules/players';
 import * as fn from '../../../modules/fn_api/api';
@@ -24,6 +26,7 @@ import { getAccessCookieHeader } from '../../../modules/fn_api/accessGrant';
 */
 interface PlayRequest {
     id: string;
+    maximizeWindow?: boolean;
     sourceIndex: number; // 可选，播放源
 }
 
@@ -231,8 +234,8 @@ async function handlePlayMovie(_event: IpcMainEvent, request: PlayRequest): Prom
 }
 
 async function requestPlayback(request: PlayRequest): Promise<'busy' | 'started' | 'failed'> {
-    if (playbackStarting || currentPlayer?.isPlaying()) {
-        log.warn('播放器正在启动或播放，忽略重复播放请求');
+    if (playbackStarting) {
+        log.warn('播放器正在启动或切换，忽略重复播放请求');
         return 'busy';
     }
 
@@ -244,7 +247,7 @@ async function requestPlayback(request: PlayRequest): Promise<'busy' | 'started'
     }
 }
 
-async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<boolean> {
+async function startPlayback({ id, sourceIndex, maximizeWindow }: PlayRequest): Promise<boolean> {
     log.info('Play movie event received id:', id, ' index:', sourceIndex);
 
     const config = fnConfig.readConfig();
@@ -361,6 +364,7 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<boolean>
     const mpvArgs = [
         '--force-window=immediate',
         '--border=no',
+        ...(maximizeWindow ? ['--window-maximized=yes', '--ontop=yes'] : []),
         '--network-timeout=180',
         `--volume=${fnConfig.getMpvVolume()}`,
     ];
@@ -381,7 +385,18 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<boolean>
         onVolumeChange: fnConfig.setMpvVolume,
     };
 
+    // 新影片验证完成后再关闭旧播放器，避免无效选片打断当前播放。
+    if (currentPlayer?.isPlaying()) {
+        try {
+            await currentPlayer.stopForSwitch();
+        } catch (error) {
+            log.warn('无法关闭当前播放器:', error);
+            return false;
+        }
+    }
+
     // 创建播放器实例
+    if (maximizeWindow) wakeWindowsDisplay();
     const player = ply.PlayerFactory.createPlayer(ply.PlayerType.MPV, playConfig);
 
     // 保存全局引用
@@ -392,6 +407,13 @@ async function startPlayback({ id, sourceIndex }: PlayRequest): Promise<boolean>
     if (!started && currentPlayer === player) {
         currentPlayer = null;
         return false;
+    }
+    if (started && maximizeWindow) {
+        try {
+            await player.setWindowMode('maximize');
+        } catch (error) {
+            log.warn('无法将 MPV 窗口置顶并最大化:', error);
+        }
     }
     return started;
 }
@@ -467,10 +489,35 @@ function init(): void {
     }
 
     const controlToken = process.env.FNTV_MEDIA_HTTP_TOKEN;
+    const requestedHost = process.env.FNTV_MEDIA_HTTP_HOST?.trim() || '127.0.0.1';
+    const controlHost = isIPv4(requestedHost)
+        && /^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/.test(requestedHost)
+        ? requestedHost
+        : '127.0.0.1';
+    if (requestedHost !== controlHost) {
+        log.warn('媒体控制监听地址无效，使用 127.0.0.1');
+    }
     if (process.platform === 'win32' && controlToken && /^[a-f0-9]{64}$/i.test(controlToken)) {
         const server = createMediaHttpServer(controlToken, () =>
             !playbackStarting && currentPlayer?.isPlaying() ? currentPlayer : null,
             {
+                catalog: async page => {
+                    const result = await getLibraryApi().getItemList({
+                        parent_guid: '',
+                        exclude_folder: 1,
+                        sort_column: 'sort_title',
+                        sort_type: 'ASC',
+                        page,
+                        page_size: 8,
+                    });
+                    if (!result.success || !result.data) {
+                        throw new MediaHttpError(502, 'catalog_failed');
+                    }
+                    return {
+                        total: result.data.total,
+                        items: result.data.list.map(toLibraryResult),
+                    };
+                },
                 search: async query => {
                     const result = await getLibraryApi().searchTitles(query);
                     if (!result.success) throw new MediaHttpError(502, 'search_failed');
@@ -490,17 +537,18 @@ function init(): void {
                 },
                 play: async id => {
                     getLibraryApi();
-                    const result = await requestPlayback({ id, sourceIndex: 0 });
+                    const result = await requestPlayback({ id, sourceIndex: 0, maximizeWindow: true });
                     if (result === 'busy') throw new MediaHttpError(409, 'player_busy');
                     if (result === 'failed') throw new MediaHttpError(502, 'playback_failed');
                 },
             },
+            wakeWindowsDisplay,
         );
         server.on('error', (error: NodeJS.ErrnoException) => {
-            log.warn('媒体控制服务无法监听 127.0.0.1:18473:', error.code);
+            log.warn('媒体控制服务无法监听:', controlHost + ':18473', error.code);
         });
-        server.listen(18473, '127.0.0.1', () => {
-            log.info('媒体控制服务已启动: http://127.0.0.1:18473');
+        server.listen(18473, controlHost, () => {
+            log.info('媒体控制服务已启动:', controlHost + ':18473');
         });
         registerAppHook('beforeQuit', () => {
             server.close();
