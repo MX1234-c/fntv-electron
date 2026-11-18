@@ -1,3 +1,4 @@
+import { publishMediaService } from '../../common/mediaDiscovery';
 import { wakeWindowsDisplay } from '../../common/wakeDisplay';
 import { isIPv4 } from 'node:net';
 import { app, BrowserWindow, dialog, IpcMainEvent } from 'electron';
@@ -547,10 +548,14 @@ function init(): void {
         server.on('error', (error: NodeJS.ErrnoException) => {
             log.warn('媒体控制服务无法监听:', controlHost + ':18473', error.code);
         });
+        let stopDiscovery = () => {};
         server.listen(18473, controlHost, () => {
+            try { stopDiscovery = publishMediaService(controlHost); }
+            catch (error) { log.warn('无法启动媒体服务广播:', error); }
             log.info('媒体控制服务已启动:', controlHost + ':18473');
         });
         registerAppHook('beforeQuit', () => {
+            stopDiscovery();
             server.close();
             server.closeAllConnections();
         });
